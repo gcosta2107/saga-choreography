@@ -5,17 +5,16 @@ import br.com.microservices.choreography.paymentservice.core.dto.Event;
 import br.com.microservices.choreography.paymentservice.core.dto.History;
 import br.com.microservices.choreography.paymentservice.core.dto.OrderProducts;
 import br.com.microservices.choreography.paymentservice.core.enums.EPaymentStatus;
+import br.com.microservices.choreography.paymentservice.core.enums.ESagaStatus;
 import br.com.microservices.choreography.paymentservice.core.model.Payment;
-import br.com.microservices.choreography.paymentservice.core.producer.KafkaProducer;
 import br.com.microservices.choreography.paymentservice.core.repository.PaymentRepository;
+import br.com.microservices.choreography.paymentservice.core.saga.SagaExecutionController;
 import br.com.microservices.choreography.paymentservice.core.utils.JsonUtil;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-
-import static br.com.microservices.choreography.paymentservice.core.enums.ESagaStatus.*;
 
 @Slf4j
 @Service
@@ -27,8 +26,8 @@ public class PaymentService {
     private static final Double MIN_VALUE_AMOUNT = 0.1;
 
     private final JsonUtil jsonUtil;
-    private final KafkaProducer producer;
     private final PaymentRepository paymentRepository;
+    private final SagaExecutionController sagaExecutionController;
 
     public void realizePayment(Event event) {
         try {
@@ -42,7 +41,7 @@ public class PaymentService {
             log.error("Error trying to make payment: ", ex);
             handleFailCurrentNotExecuted(event, ex.getMessage());
         }
-        producer.sendEvent(jsonUtil.toJson(event), "");
+        sagaExecutionController.handleSaga(event);
     }
 
     private void checkCurrentValidation(Event event) {
@@ -100,7 +99,7 @@ public class PaymentService {
     }
 
     private void handleSuccess(Event event) {
-        event.setStatus(SUCCESS);
+        event.setStatus(ESagaStatus.SUCCESS);
         event.setSource(CURRENT_SOURCE);
         addHistory(event, "Payment realized successfully!");
     }
@@ -117,13 +116,13 @@ public class PaymentService {
     }
 
     private void handleFailCurrentNotExecuted(Event event, String message) {
-        event.setStatus(ROLLBACK_PENDING);
+        event.setStatus(ESagaStatus.ROLLBACK_PENDING);
         event.setSource(CURRENT_SOURCE);
         addHistory(event, "Fail to realize payment: ".concat(message));
     }
 
     public void realizeRefund(Event event) {
-        event.setStatus(FAIL);
+        event.setStatus(ESagaStatus.FAIL);
         event.setSource(CURRENT_SOURCE);
         try {
             changePaymentStatusToRefund(event);
@@ -131,7 +130,7 @@ public class PaymentService {
         } catch (Exception ex) {
             addHistory(event, "Rollback not executed for payment: ".concat(ex.getMessage()));
         }
-        producer.sendEvent(jsonUtil.toJson(event), "");
+        sagaExecutionController.handleSaga(event);
     }
 
     private void changePaymentStatusToRefund(Event event) {
